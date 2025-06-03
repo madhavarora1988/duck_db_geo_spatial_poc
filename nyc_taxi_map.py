@@ -1,6 +1,7 @@
 import streamlit as st
 import duckdb
 import folium
+import folium.plugins
 from streamlit_folium import folium_static
 import pandas as pd
 
@@ -12,33 +13,45 @@ st.write("This app visualizes NYC taxi dropoff locations using DuckDB Spatial an
 # Use a file-based DuckDB database
 @st.cache_resource
 def init_duckdb():
-    con = duckdb.connect("nyc_taxi.duckdb")
-    duckdb.install_extension("spatial", connection=con)
-    duckdb.load_extension("spatial", connection=con)
-    return con
+    try:
+        con = duckdb.connect(":memory:")  # Use in-memory database for cloud deployment
+        con.install_extension("spatial")
+        con.load_extension("spatial")
+        return con
+    except Exception as e:
+        st.error(f"Error initializing DuckDB: {e}")
+        return None
 
 # Load and process taxi data
 @st.cache_data
 def load_taxi_data(_con):
-    # Create table if it doesn't exist
-    sql = """
-    CREATE TABLE IF NOT EXISTS rides AS
-    SELECT 
-        dropoff_longitude as longitude,
-        dropoff_latitude as latitude,
-        total_amount,
-        ST_Point(dropoff_longitude, dropoff_latitude) as geometry
-    FROM 'https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2010-03.parquet' 
-    WHERE
-        dropoff_longitude >= -74.6087 AND
-        dropoff_latitude >= 40.2738 AND
-        dropoff_longitude <= -73.4928 AND
-        dropoff_latitude <= 41.1757 AND
-        total_amount > 0
-    LIMIT 1000000;
-    """
-    _con.execute(sql)
-    return _con.execute("SELECT * FROM rides").df()
+    if _con is None:
+        st.error("Database connection failed")
+        return pd.DataFrame()
+    
+    try:
+        # Create table if it doesn't exist
+        sql = """
+        CREATE TABLE IF NOT EXISTS rides AS
+        SELECT 
+            dropoff_longitude as longitude,
+            dropoff_latitude as latitude,
+            total_amount,
+            ST_Point(dropoff_longitude, dropoff_latitude) as geometry
+        FROM 'https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2010-03.parquet' 
+        WHERE
+            dropoff_longitude >= -74.6087 AND
+            dropoff_latitude >= 40.2738 AND
+            dropoff_longitude <= -73.4928 AND
+            dropoff_latitude <= 41.1757 AND
+            total_amount > 0
+        LIMIT 1000000;
+        """
+        _con.execute(sql)
+        return _con.execute("SELECT * FROM rides").df()
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return pd.DataFrame()
 
 # Initialize connection
 con = init_duckdb()
@@ -46,6 +59,11 @@ con = init_duckdb()
 # Load data with a loading spinner
 with st.spinner("Loading taxi data..."):
     df = load_taxi_data(con)
+
+# Check if data was loaded successfully
+if df.empty:
+    st.error("Failed to load data. Please try again later.")
+    st.stop()
 
 # Create visualization controls
 st.sidebar.header("Visualization Controls")
